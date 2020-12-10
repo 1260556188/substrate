@@ -574,13 +574,16 @@ where
 			value,
 			self.ctx,
 		)?;
-		let self_trie_id = self.ctx.self_trie_id.as_ref().expect(
-			"this function is only invoked by in the context of a contract;\
-				a contract has a trie id;\
-				this can't be None; qed",
-		);
-		Storage::<T>::destroy_contract(&self_id, self_trie_id);
-		Ok(())
+		if let Some(ContractInfo::Alive(info)) = ContractInfoOf::<T>::take(&self_id) {
+			Storage::<T>::queue_trie_for_deletion(info);
+			Ok(())
+		} else {
+			panic!(
+				"this function is only invoked by in the context of a contract;\
+				this contract is therefore alive;\
+				qed"
+			);
+		}
 	}
 
 	fn call(

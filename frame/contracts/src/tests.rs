@@ -158,6 +158,8 @@ parameter_types! {
 	pub const SurchargeReward: u64 = 150;
 	pub const MaxDepth: u32 = 100;
 	pub const MaxValueSize: u32 = 16_384;
+	pub const DeletionQueueDepth: u32 = 2048;
+	pub const DeletionWeightLimit: Weight = 500_000_000_000;
 }
 
 parameter_types! {
@@ -186,6 +188,8 @@ impl Config for Test {
 	type MaxValueSize = MaxValueSize;
 	type WeightPrice = Self;
 	type WeightInfo = ();
+	type DeletionQueueDepth = DeletionQueueDepth;
+	type DeletionWeightLimit = DeletionWeightLimit;
 }
 
 type Balances = pallet_balances::Module<Test>;

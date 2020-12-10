@@ -319,6 +319,12 @@ pub trait Config: frame_system::Config {
 	/// Describes the weights of the dispatchables of this module and is also used to
 	/// construct a default cost schedule.
 	type WeightInfo: WeightInfo;
+
+	/// The maximum number of tries that can be queued for deletion.
+	type DeletionQueueDepth: Get<u32>;
+
+	/// The maximum amount of weight that can be consumed per block for lazy trie removal.
+	type DeletionWeightLimit: Get<Weight>;
 }
 
 decl_error! {
@@ -431,7 +437,17 @@ decl_module! {
 		/// The maximum size of a storage value in bytes. A reasonable default is 16 KiB.
 		const MaxValueSize: u32 = T::MaxValueSize::get();
 
+		/// The maximum number of tries that can be queued for deletion.
+		const DeletionQueueDepth: u32 = T::DeletionQueueDepth::get();
+
+		/// The maximum amount of weight that can be consumed per block for lazy trie removal.
+		const DeletionWeightLimit: Weight = T::DeletionWeightLimit::get();
+
 		fn deposit_event() = default;
+
+		fn on_initialize() -> Weight {
+			Storage::<T>::process_deletion_queue_batch(T::DeletionWeightLimit::get())
+		}
 
 		/// Updates the schedule for metering contracts.
 		///
@@ -715,6 +731,11 @@ decl_storage! {
 		///
 		/// TWOX-NOTE: SAFE since `AccountId` is a secure hash.
 		pub ContractInfoOf: map hasher(twox_64_concat) T::AccountId => Option<ContractInfo<T>>;
+		/// Evicted contracts that await child trie deletion.
+		///
+		/// Child trie deletion is a heavy operation depending on the amount of storage items
+		/// stored in said trie. Therefore this operation is performed lazily in `on_initialize`.
+		pub DeletionQueue: Vec<storage::DeletedContract>;
 	}
 }
 

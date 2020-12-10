@@ -19,6 +19,7 @@
 use crate::{
 	AliveContractInfo, BalanceOf, ContractInfo, ContractInfoOf, Module, RawEvent,
 	TombstoneContractInfo, Config, CodeHash, ConfigCache, Error,
+	storage::Storage,
 };
 use sp_std::prelude::*;
 use sp_io::hashing::blake2_256;
@@ -261,10 +262,7 @@ where
 				let tombstone_info = ContractInfo::Tombstone(tombstone);
 				<ContractInfoOf<T>>::insert(account, &tombstone_info);
 
-				child::kill_storage(
-					&alive_contract_info.child_trie_info(),
-					None,
-				);
+				Storage::<T>::queue_trie_for_deletion(alive_contract_info);
 
 				<Module<T>>::deposit_event(RawEvent::Evicted(account.clone(), true));
 				Some(tombstone_info)

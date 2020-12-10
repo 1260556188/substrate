@@ -19,19 +19,31 @@
 use crate::{
 	exec::{AccountIdOf, StorageKey},
 	AliveContractInfo, BalanceOf, CodeHash, ContractInfo, ContractInfoOf, Config, TrieId,
-	AccountCounter,
+	AccountCounter, DeletionQueue,
 };
+use codec::{Encode, Decode};
 use sp_std::prelude::*;
 use sp_std::marker::PhantomData;
 use sp_io::hashing::blake2_256;
 use sp_runtime::traits::Bounded;
 use sp_core::crypto::UncheckedFrom;
-use frame_support::{storage::child, StorageMap};
+use frame_support::{
+	StorageMap,
+	debug,
+	storage::{child::{self, KillOutcome}, StorageValue},
+	weights::Weight,
+};
 
 /// An error that means that the account requested either doesn't exist or represents a tombstone
 /// account.
 #[cfg_attr(test, derive(PartialEq, Eq, Debug))]
 pub struct ContractAbsentError;
+
+#[derive(Encode, Decode)]
+pub struct DeletedContract {
+	pair_count: u32,
+	trie_id: TrieId,
+}
 
 pub struct Storage<T>(PhantomData<T>);
 
@@ -190,18 +202,58 @@ where
 		})
 	}
 
-	/// Removes the contract and all the storage associated with it.
+	/// Push a contract's trie to the deletion queue for lazy removal.
 	///
-	/// This function doesn't affect the account.
-	pub fn destroy_contract(address: &AccountIdOf<T>, trie_id: &TrieId) {
-		<ContractInfoOf<T>>::remove(address);
-		child::kill_storage(&crate::child_trie_info(&trie_id), None);
+	/// You should have removed the contract from the [`ContractInfoOf`] storage
+	/// before queuing the trie for deletion.
+	pub fn queue_trie_for_deletion(contract: AliveContractInfo<T>) {
+		DeletionQueue::append(DeletedContract {
+			pair_count: contract.total_pair_count,
+			trie_id: contract.trie_id,
+		});
+	}
+
+	pub fn process_deletion_queue_batch(budget: Weight) -> Weight {
+		let mut budget = budget as u32;
+		let mut queue = DeletionQueue::get();
+
+		while !queue.is_empty() && budget > 0 {
+			// Cannot panic due to loop condition
+			let item = &mut queue[0];
+			let pair_count = item.pair_count;
+
+			let outcome = child::kill_storage(
+				&crate::child_trie_info(&item.trie_id),
+				Some(budget),
+			);
+
+			if pair_count > budget {
+				// Cannot underflow because of the if condition
+				item.pair_count -= budget;
+			} else {
+				// We do not care to preserve order. The contract is deleted already and
+				// noone waits for the trie to be deleted.
+				let removed = queue.swap_remove(0);
+
+				// This should not happen as our budget was large enough to remove all keys.
+				if let KillOutcome::SomeRemaining = outcome {
+					debug::warn!(
+						"After deletion keys are remaining in this child trie: {:?}",
+						removed.trie_id,
+					)
+				}
+			}
+
+			budget = budget.saturating_sub(budget.min(pair_count));
+		}
+
+		// TODO: calculate real weight
+		42u32.into()
 	}
 
 	/// This generator uses inner counter for account id and applies the hash over `AccountId +
 	/// accountid_counter`.
 	pub fn generate_trie_id(account_id: &AccountIdOf<T>) -> TrieId {
-		use frame_support::StorageValue;
 		use sp_runtime::traits::Hash;
 		// Note that skipping a value due to error is not an issue here.
 		// We only need uniqueness, not sequence.
